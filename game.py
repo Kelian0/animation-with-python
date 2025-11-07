@@ -7,10 +7,11 @@ import math
 import random
 from ball import Ball
 from arc import ArcShape
+from circle import Circle
 
 # --- Constantes ---
-LARGEUR_ECRAN = 9 * 50
-HAUTEUR_ECRAN = 16 * 50
+LARGEUR_ECRAN = 9 * 100
+HAUTEUR_ECRAN = 16 * 100
 BLANC = (255, 255, 255)
 NOIR = (0, 0, 0)
 ROUGE = (255, 0, 0)
@@ -26,25 +27,26 @@ class Game:
         self.particles = []
         self.center_x = self.largeur_ecran // 2
         self.center_y = self.hauteur_ecran // 2
+        self.center = (self.center_x, self.center_y)
 
         pygame.init()
+        self.font = pygame.font.Font(None, 52)
         self.ecran = pygame.display.set_mode((self.largeur_ecran, self.hauteur_ecran))
         pygame.display.set_caption("Simulation Physique (R=Rotation, D=Détruire, Espace=Créer)")
         self.clock = pygame.time.Clock()
 
-        self.arc_update_counter = 0
-        self.ARC_UPDATE_FREQUENCY = 1
-
-        # Initialisation Pymunk
-        self.space = pymunk.Space()
-        self.space.gravity = (0, 900)
+        self.ARC_UPDATE_FREQUENCY = 100
+        self.time_since_last_physics_update = 0
 
         # Initialisation Enregistreur Vidéo
         self.video_writer = self._init_video_writer()
+        self.frame_count = 0
+        self.max_duration_sec = 15
+        self.max_frames = FPS * self.max_duration_sec  # 60 * 15 = 900
 
         # Création des objets
         self.objets_dynamiques = []  # Liste pour les objets qui bougent (balles)
-        self.arcs = []   # Liste pour les objets fixes
+        self.objets_statiques = []   # Liste pour les objets fixes
         
         self.creer_objets_initiaux()
         
@@ -52,131 +54,50 @@ class Game:
 
 
     def creer_objets_initiaux(self):
-        """ Crée l'arc initial """
-        for i in range(1,50):
-            arc = ArcShape(
-                center=(self.center_x, self.center_y ), 
-                radius=100+i*50, 
-                angle_start_deg=0+i*5, 
-                angle_end_deg=300+i*5, 
-                num_segments=100, 
-                space=self.space
-            )
-            self.arcs.append(arc) # ArcShape a sa propre méthode draw
-    
-    def check_arc_states(self,arc):
-        """
-        Vérifie si le balle est à l'intérieur ou à l'extérieur
-        du cercle imaginaire de l'arc.
-        """
-        
-        # --- MODIFICATION REQUISE ICI ---
-        # Obtenir les propriétés du cercle de l'arc
-        # Le centre n'est plus fixe, il est sur le corps de l'arc
-        arc_center = arc.body.position 
-        # --- FIN DE LA MODIFICATION ---
-        
-        # On utilise le carré du rayon pour éviter de calculer une racine carrée (plus rapide)
-        radius_sqrd = arc.radius**2
+        """ Crée les objets initiaux """
+        circle = Circle(self.center_x, self.center_y, radius=200)
+        self.objets_statiques.append(circle)
+        self.creer_balle()
 
-        all_ball_outside = True 
-        
-        for balle in self.objets_dynamiques:
-            # Obtenir la position de la balle
-            ball_pos = balle.body.position
-            
-            # Calculer la distance au carré
-            distance_sqrd = (ball_pos - arc_center).get_length_sqrd()
-            
-            # L'état actuel est-il "dehors" ?
-            is_currently_outside = distance_sqrd > radius_sqrd
-            all_ball_outside = all_ball_outside and is_currently_outside
-
-        return all_ball_outside
 
     def creer_balle(self):
         """ Crée une nouvelle balle à une position aléatoire """
         vx = random.randint(-200, 200) 
-        # vy: vitesse verticale (poussée vers le haut, donc négative)
-        vy = random.randint(-400, -200)
-        balle = Ball(position=(self.center_x, self.center_y), radius=10, space=self.space, initial_velocity=(vx, vy))
+        vy = random.randint(-1, 1)
+
+        balle = Ball(position=(self.center_x, self.center_y), radius=20, initial_velocity=(-1, -1))
         self.objets_dynamiques.append(balle)
+
+    def uptdate_physics(self):
+        for obj in self.objets_dynamiques:
+            obj.update_physics
+        
+        for obj in self.objets_statiques:
+            obj.handle_collision(self.objets_dynamiques[0])
 
     def run(self):
         """ Boucle de jeu principale """
         while self.running:
             # 1. Gérer les événements
-            self.handle_events()
-            
-            # 2. Mettre à jour la physique
-            self.space.step(1.0 / FPS)
-          
-            self.update_arcs() # Appeler notre nouvelle méthode
+            dt = self.clock.tick(FPS)
 
+            self.frame_count += 1
+            if self.frame_count >= self.max_frames:
+                print(f"Atteint {self.max_frames} images ({self.max_duration_sec} sec). Arrêt de la simulation.")
+                self.running = False
+            
+            self.handle_events()
+
+            self.uptdate_physics()
+          
             # 3. Dessiner les objets
             self.draw()
 
             # 4. Enregistrer la frame
             self.record_frame()
-
-            # 5. Contrôler le FPS
-            self.clock.tick(FPS)
             
         # Fin de la boucle
         self.cleanup()
-
-    def update_arcs(self):
-        """
-        Met à jour la rotation, la taille et vérifie l'état de tous les arcs.
-        C'est une fonction coûteuse, à ne pas appeler à chaque frame.
-        """
-        # On itère sur une COPIE de la liste (.copy())
-        # car on va modifier la liste originale (self.arcs) en cours de route.
-        for arc in self.arcs.copy():
-            # Utilise la nouvelle méthode de rotation (très rapide)
-            arc.rotate(1) 
-            
-            new_radius = arc.radius - 0.1
-            arc.set_radius(new_radius)
-
-            # Si l'arc est devenu trop petit, on le détruit
-            if arc.radius < 10:
-                self.create_arc_explosion(arc) 
-                arc.destroy()
-                self.arcs.remove(arc) 
-                continue # Passer à l'arc suivant
-
-            # Si toutes les balles sont sorties, on le détruit
-            # Note: Le centre est maintenant 'arc.body.position'
-            if self.check_arc_states(arc):
-                self.create_arc_explosion(arc)
-                arc.destroy()
-                self.arcs.remove(arc)
-
-
-    def creer_particule(self, x, y):
-        """
-        Crée une particule unique avec une vélocité et une durée de vie.
-        Format: [position, vélocité, durée_de_vie]
-        """
-        position = [x, y]
-        # Donner une vélocité d'explosion aléatoire (dans toutes les directions)
-        velocite = [random.uniform(-0.2, 0.2), random.uniform(-.2, .2)]
-        # Durée de vie en nombre de frames
-        duree_de_vie = random.randint(30, 60) # Dure entre 0.5 et 1 seconde
-        
-        self.particles.append([position, velocite, duree_de_vie])
-
-    def create_arc_explosion(self, arc):
-        """
-        Crée une explosion de particules sur toute la longueur d'un arc.
-        """
-        print(f"Création d'une explosion pour l'arc (rayon {arc.radius:.0f})")
-        # On crée une particule tous les N points pour ne pas surcharger
-        points_a_creer = arc.points_for_drawing[::1] # '::3' prend 1 point sur 3
-        
-        for point in points_a_creer:
-            self.creer_particule(point[0], point[1])
 
     def handle_events(self):
         """ Gère les entrées utilisateur (clavier, souris) """
@@ -205,32 +126,34 @@ class Game:
         s.fill(NOIR)    # La couleur qui "estompe"
         self.ecran.blit(s, (0, 0))
         
-        # Dessiner les objets statiques
-        for obj in self.arcs:
-                obj.draw(self.ecran) # Soit la méthode draw de l'objet, soit la lambda du sol
-            
         # Dessiner les objets dynamiques
+
+        for obj in self.objets_statiques:
+            obj.draw(self.ecran)
+
         for obj in self.objets_dynamiques:
             obj.draw(self.ecran)
 
-        for particule in self.particles.copy():
-            # 1. Mettre à jour la position
-            particule[0][0] += particule[1][0] # pos_x += vel_x
-            particule[0][1] += particule[1][1] + 1# pos_y += vel_y
-            
-            # 2. Réduire la durée de vie
-            particule[2] -= 1 # durée_de_vie -= 1
-            
-            # 3. Supprimer si la durée de vie est écoulée
-            if particule[2] <= 0:
-                self.particles.remove(particule)
-            else:
-                # 4. Dessiner la particule (un simple cercle blanc)
-                # On peut faire varier la taille ou la couleur avec la durée de vie
-                couleur_particule = (100, 100, 100) # Blanc-gris
-                pygame.draw.circle(self.ecran, couleur_particule, particule[0], 2)
-        # --- FIN NOUVEAU ---
-            
+
+        # 1. Calculer le temps écoulé
+        elapsed_sec = self.frame_count / FPS
+        
+        # 2. Créer le texte à afficher
+        #    (le .2f formate le nombre pour n'avoir que 2 décimales)
+        text_to_display = f"Comment the next thing to add to the animation"
+        
+        # 3. Rendre le texte sur une nouvelle Surface
+        #    (True = anticrénelage, BLANC = couleur (défini en haut de votre script))
+        text_surface = self.font.render(text_to_display, True, BLANC)
+        
+        # 4. Obtenir le rectangle du texte et le positionner
+        #    (ici, on le place en haut à gauche avec 10px de marge)
+        text_rect = text_surface.get_rect(topleft=(45, 200))
+        
+        # 5. Dessiner la surface du texte sur l'écran principal
+        self.ecran.blit(text_surface, text_rect)
+
+
         pygame.display.flip()
 
     def record_frame(self):
@@ -257,5 +180,4 @@ class Game:
 # --- Point d'entrée du script ---
 if __name__ == "__main__":
     game = Game()
-    game.creer_balle() # Créer une balle au démarrage
     game.run()
