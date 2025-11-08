@@ -51,7 +51,7 @@ class Game:
         self.clock = pygame.time.Clock()
 
         self.frame_count = 0
-        self.max_duration_sec = 15
+        self.max_duration_sec = 45
         self.max_frames = FPS * self.max_duration_sec
 
         # --- AJOUTS : PISTE AUDIO MASTER ---
@@ -77,11 +77,13 @@ class Game:
                 self.music_sound_array = np.column_stack([self.music_sound_array[:, 0], self.music_sound_array[:, 0]])
             
             print(f"Musique de fond '{self.music_file}' chargée (pour enregistrement), durée: {self.music_length_sec:.2f}s")
-            
-            # 4. Variables de gestion (identiques à avant)
-            self.is_music_window_active = False 
-            self.music_window_timer = 0         
-            self.music_playback_head = 0.0
+
+            # 4. Variables de gestion (Système de file d'attente)
+            self.music_playback_head = 0.0      # Où en est-on dans le morceau (en sec)
+            self.music_window_timer = 0         # Timer (en frames) de la fenêtre de 1s EN COURS
+            self.music_windows_queued = 0       # Nb de fenêtres de 1s en ATTENTE
+            self.music_window_duration_sec = 0.5
+            self.music_window_duration_frames = int(self.music_window_duration_sec * FPS)
 
         except Exception as e:
             print(f"--- ERREUR ---")
@@ -140,6 +142,7 @@ class Game:
 
     # --- MODIFICATION DE LA PHYSIQUE POUR ENREGISTRER L'AUDIO ---
     def uptdate_physics(self): # Note: faute de frappe "uptdate" conservée
+        collision_this_frame = False
         for obj in self.objets_dynamiques:
             obj.update_physics()
         
@@ -147,45 +150,115 @@ class Game:
             # On vérifie s'il y a collision
             if obj.handle_collision(self.objets_dynamiques[0]):
                 # 1. Jouer le son (pour l'entendre en direct)
-                self.bounce_sound.play()
+                # self.bounce_sound.play()
                 # 2. Enregistrer le son dans notre piste audio master
-                self.record_sfx_at_current_frame()
+                # self.record_sfx_at_current_frame()
+                collision_this_frame = True
 
-    # --- NOUVELLE MÉTHODE : RECORD_SFX ---
-    def record_sfx_at_current_frame(self):
-        """ Mixe le son de rebond dans la piste audio master à la position actuelle. """
+        # Ne rien faire si la musique n'a pas chargé
+        if self.music_length_sec <= 0:
+            return
+
+        # 1. Détection de collision : Ajouter à la file d'attente
+        if collision_this_frame:
+            if self.music_windows_queued < 3:
+                self.music_windows_queued += 1
+                print(f"Collision ! Fenêtre ajoutée à la file. (Total en attente: {self.music_windows_queued})")
+
+        # 2. Gestion du timer
         
-        # 1. Calculer où commence le son (en "samples")
-        start_sample = int(self.frame_count * (self.sample_rate / FPS))
-        
-        # 2. Déterminer la longueur du son
-        sound_length = len(self.bounce_sound_array)
-        end_sample = start_sample + sound_length
-        
-        # 3. Vérifier qu'on ne dépasse pas la fin de la vidéo (15 sec)
-        if end_sample > len(self.master_audio_track):
-            # Tronquer le son s'il dépasse
-            sound_length = len(self.master_audio_track) - start_sample
-            if sound_length <= 0:
-                return # Le son commence après la fin, ne rien faire
+        # Si une fenêtre est activement en cours de lecture
+        if self.music_window_timer > 0:
+            self.music_window_timer -= 1 # On la décompte
             
-            sound_data_to_mix = self.bounce_sound_array[:sound_length]
-        else:
-            sound_data_to_mix = self.bounce_sound_array
-
-        # 4. "Mixer" le son (ajouter les valeurs)
-        # On utilise des int32 pour l'addition pour éviter les débordements (clipping)
-        mix_region = self.master_audio_track[start_sample : start_sample + sound_length]
+            # Si elle VIENT de se terminer (timer atteint 0)
+            if self.music_window_timer == 0:
+                # On avance la tête de lecture pour la PROCHAINE fenêtre
+                self.music_playback_head += self.music_window_duration_sec
+                
+                # Gérer le bouclage (looping)
+                if self.music_playback_head >= self.music_length_sec:
+                    self.music_playback_head = 0.0
+                
+                print(f"Fenêtre musique terminée. Prochaine reprise à {self.music_playback_head:.2f}s")
         
+        # Si aucune fenêtre n'est en cours ET qu'il y en a en attente
+        if self.music_window_timer == 0 and self.music_windows_queued > 0:
+            # On "consomme" une fenêtre de la file d'attente
+            self.music_windows_queued -= 1
+            # On démarre le timer pour 1 seconde
+            self.music_window_timer = self.music_window_duration_frames
+            print(f"Démarrage d'une fenêtre musique (chunk à {self.music_playback_head:.2f}s). (Restant en attente: {self.music_windows_queued})")
+    
+    
+    def record_background_music(self):
+        """
+        Mixe la musique de fond dans la master_audio_track
+        si la fenêtre de musique est active.
+        """
+        # Ne rien faire si la fenêtre n'est pas active ou si la musique n'a pas chargé
+        if self.music_window_timer <= 0 or self.music_length_sec <= 0:
+            return
+
+        # 1. Calculer combien d'échantillons audio représentent cette image
+        samples_per_frame = int(self.sample_rate / FPS)
+        
+        # 2. Trouver la position de DESTINATION (où écrire dans le master)
+        start_dest_sample = int(self.frame_count * (self.sample_rate / FPS))
+        end_dest_sample = start_dest_sample + samples_per_frame
+        
+        # 3. Gérer le débordement de fin de vidéo
+        if start_dest_sample >= len(self.master_audio_track):
+            return # On a dépassé la fin de la vidéo
+        
+        actual_chunk_len = samples_per_frame
+        if end_dest_sample > len(self.master_audio_track):
+            end_dest_sample = len(self.master_audio_track)
+            actual_chunk_len = end_dest_sample - start_dest_sample
+            if actual_chunk_len <= 0: return
+
+        # 4. Trouver la position SOURCE (où lire dans le fichier musique)
+        # Temps (en sec) dans la fenêtre de 1s actuelle
+        frames_elapsed = self.music_window_duration_frames - self.music_window_timer
+        time_into_window_sec = frames_elapsed / FPS # <-- MODIFIÉ
+        # Temps (en sec) absolu dans le fichier musique
+        current_music_time_sec = self.music_playback_head + time_into_window_sec
+        
+        start_source_sample = int(current_music_time_sec * self.sample_rate)
+        
+        # 5. Obtenir le morceau audio de la SOURCE (gérer le bouclage)
+        music_array_len = len(self.music_sound_array)
+        
+        # Appliquer le modulo pour boucler
+        start_source_sample = start_source_sample % music_array_len
+        end_source_sample = start_source_sample + actual_chunk_len
+        
+        source_chunk = None
+        if end_source_sample <= music_array_len:
+            # Cas simple : le morceau est en un seul bloc
+            source_chunk = self.music_sound_array[start_source_sample:end_source_sample]
+        else:
+            # Cas complexe : le morceau boucle (il est en deux parties)
+            part1_len = music_array_len - start_source_sample
+            part1 = self.music_sound_array[start_source_sample:]
+            
+            part2_len = end_source_sample - music_array_len
+            part2 = self.music_sound_array[:part2_len]
+            
+            source_chunk = np.vstack((part1, part2)) # Combiner les deux parties
+
+        # 6. Obtenir le morceau de DESTINATION (depuis le master)
+        dest_chunk = self.master_audio_track[start_dest_sample:end_dest_sample]
+        
+        # 7. Mixer (ajouter les deux morceaux, avec 'clipping')
         mixed_audio = np.clip(
-            mix_region.astype(np.int32) + sound_data_to_mix.astype(np.int32), 
+            dest_chunk.astype(np.int32) + source_chunk.astype(np.int32), 
             -32768, 
             32767
         )
         
-        # 5. Réinsérer la partie mixée dans la piste master
-        self.master_audio_track[start_sample : start_sample + sound_length] = mixed_audio.astype(np.int16)
-    # ----------------------------------------
+        # 8. Réécrire le morceau mixé dans le master
+        self.master_audio_track[start_dest_sample:end_dest_sample] = mixed_audio.astype(np.int16)
     
     def run(self):
         """ Boucle de jeu principale """
@@ -198,6 +271,7 @@ class Game:
             
             self.handle_events()
             self.uptdate_physics()
+            self.record_background_music()
             self.draw()
             self.record_frame()
             
