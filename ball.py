@@ -3,7 +3,7 @@ import pymunk
 import math
 
 class Ball:
-    def __init__(self, position, radius, mass=1, elasticity=1, friction=0.0,initial_velocity=(0, 0),gravity=0.98):
+    def __init__(self, position, radius,initial_velocity=(0, 0),gravity=0.1):
         self.radius = radius
         self.color = (255, 255, 255)
         self.ligne_color = (255, 0, 0)

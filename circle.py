@@ -48,7 +48,10 @@ class Circle:
             reflect_vy = ball.vy - 2 * dot_product * norm_y
             
             ball.vx = reflect_vx 
-            ball.vy = reflect_vy 
+            ball.vy = reflect_vy
+
+            return True 
+        return False
 
     def draw(self, screen):
         """Dessine le cercle conteneur."""
