@@ -1,18 +1,16 @@
 import pygame
-import pymunk
+import random
 import math
 
 class Ball:
-    def __init__(self, position, radius,initial_velocity=(0, 0),gravity=0.02,max_vel=20):
+    def __init__(self, position, radius,initial_velocity=(0, 0),gravity=0.1):
         self.radius = radius
-        self.color = (255, 255, 255)
+        self.color = (random.randint(100, 255), random.randint(100, 255), random.randint(100, 255))
         self.ligne_color = (255, 0, 0)
         self.x = position[0]
         self.y = position[1]
         self.vx = initial_velocity[0]
         self.vy = initial_velocity[1]
-
-        self.max_vel = max_vel
 
         self.gravity = gravity
 

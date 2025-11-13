@@ -1,15 +1,15 @@
 import pygame
-import random
+import pymunk
 import math
+import random
 
 class Circle:
-    def __init__(self, x, y, radius, color=(255,255,255), line_width=1,frixion = 1.1):
+    def __init__(self, x, y, radius, color=(255,255,255), line_width=1):
         self.x = float(x)
         self.y = float(y)
         self.radius = float(radius)
         self.color = color
         self.line_width = line_width
-        self.frixion = frixion
 
     def handle_collision(self, ball):
         """Vérifie et gère la collision avec la balle."""
@@ -48,46 +48,10 @@ class Circle:
             reflect_vx = ball.vx - 2 * dot_product * norm_x
             reflect_vy = ball.vy - 2 * dot_product * norm_y
             
-            # C'est une vélocité (en pixels/frame) à ajuster.
-            base_vx = reflect_vx * self.frixion
-            base_vy = reflect_vy * self.frixion
-        
-            # 2. Définir la "force" de l'aléatoire (en degrés)
-            #    (ex: 10.0 signifie que l'angle variera de -10° à +10°)
-            MAX_ANGLE_OFFSET_DEGREES = 10.0
-            
-            # 3. Convertir la vélocité de base en (vitesse, angle)
-            # Vitesse = magnitude du vecteur
-            speed = math.hypot(base_vx, base_vy) 
-            # Angle = angle du vecteur (en radians)
-            angle_rad = math.atan2(base_vy, base_vx) 
-            
-            # 4. Calculer le décalage aléatoire (en radians)
-            max_offset_rad = math.radians(MAX_ANGLE_OFFSET_DEGREES)
-            random_offset_rad = random.uniform(-max_offset_rad, max_offset_rad)
-            
-            # 5. Appliquer le décalage pour obtenir le nouvel angle
-            new_angle_rad = angle_rad + random_offset_rad
-            
-            # 6. Reconvertir (nouvel angle, vitesse d'origine) en vx / vy
-            ball.vx = speed * math.cos(new_angle_rad)
-            ball.vy = speed * math.sin(new_angle_rad)
+            ball.vx = reflect_vx 
+            ball.vy = reflect_vy
 
-            MAX_SPEED = 25.0 
-
-            # 1. Calculer la vitesse actuelle (magnitude)
-            #    math.hypot(vx, vy) est équivalent à sqrt(vx**2 + vy**2)
-            current_speed = math.hypot(ball.vx, ball.vy)
-            
-            # 2. Vérifier si on dépasse la limite
-            if current_speed > MAX_SPEED:
-                # 3. Calculer le ratio de réduction
-                #    (ex: si speed=30 et MAX=25, ratio = 25/30 = 0.83)
-                scale_factor = MAX_SPEED / current_speed
-                
-                # 4. Réduire les deux composantes de la vélocité
-                ball.vx *= scale_factor
-                ball.vy *= scale_factor
+            ball.color = (random.randint(100, 255), random.randint(100, 255), random.randint(100, 255))
 
             return True 
         return False
